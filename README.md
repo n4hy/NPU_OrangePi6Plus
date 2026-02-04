@@ -162,7 +162,16 @@ Tested on 2026-02-04 with driver fix v4.
 
 **The fix works.** Before the patch, inference #2 would hang 100% of the time.
 
-### Latency (MNIST INT8, 322K MACs)
+### NPU Performance Summary
+
+| Model | Size | MACs | Latency | Throughput | TOPS |
+|-------|------|------|---------|------------|------|
+| MNIST INT8 | 11KB | 322K | 0.35 ms | 2,900/sec | 0.002 |
+| **MobileNetV2 INT8** | 3.5MB | 300M | **1.43 ms** | **700/sec** | **0.42** |
+
+The **MobileNetV2 result (0.42 TOPS)** is a realistic measure of NPU compute performance.
+
+### Latency Details (MNIST INT8)
 
 | Metric | Value |
 |--------|-------|
@@ -170,27 +179,33 @@ Tested on 2026-02-04 with driver fix v4.
 | P50 | 0.337 ms |
 | P95 | 0.433 ms |
 | P99 | 0.606 ms |
-| Min | 0.286 ms |
-| Max | 0.743 ms |
 
-### Throughput
+### Latency Details (MobileNetV2 INT8)
 
-| Workload | Throughput |
-|----------|------------|
-| Peak (INT8) | 2,907 inf/sec |
-| Sustained 60s | 2,277 inf/sec |
-| FP32 | 696 inf/sec |
+| Metric | Value |
+|--------|-------|
+| Mean | 1.43 ms |
+| Min | 1.26 ms |
+| Max | 2.54 ms |
+| Throughput | 700 inf/sec |
+
+### Throughput Comparison
+
+| Model | INT8 | FP32 | Speedup |
+|-------|------|------|---------|
+| MNIST | 2,907 inf/sec | 696 inf/sec | 4.2x |
+| MobileNetV2 | 700 inf/sec | - | - |
 
 INT8 is **4x faster** than FP32. Quantize your models.
 
-### Computed Performance (MNIST)
+### Model Compatibility Notes
 
-| Metric | Peak | Sustained |
-|--------|------|-----------|
-| Throughput | 2,907 inf/sec | 2,277 inf/sec |
-| **GOPS** | **1.88** | **1.47** |
+The Zhouyi NPU requires models with **fixed input dimensions**. Models with dynamic batch size (e.g., `'N'` instead of `1`) will fall back to CPU.
 
-**Note:** MNIST is a tiny model (322K MACs). These numbers reflect job dispatch overhead, not peak NPU compute. For true TOPS measurement, benchmark with ResNet-50 (~4B MACs) or YOLOv5 (~7B MACs).
+Working models can be downloaded from:
+- [Kalray MobileNetV2 INT8](https://huggingface.co/Kalray/mobilenet-v2) - works on NPU
+- [ONNX Model Zoo](https://huggingface.co/onnxmodelzoo) - check for fixed dimensions
+- [ARM China Model Zoo](https://github.com/Arm-China/Model_zoo) - requires Zhouyi SDK to compile
 
 ---
 
