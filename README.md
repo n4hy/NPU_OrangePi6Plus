@@ -121,8 +121,8 @@ You MUST be running the Orange Pi official Ubuntu 24.04 image with the pre-insta
 ### Install the Fix
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/orangepi-npu-fix.git
-cd orangepi-npu-fix
+git clone https://github.com/n4hy/NPU_OrangePi6Plus.git
+cd NPU_OrangePi6Plus
 sudo ./install_npu_fix_v4.sh
 ```
 
