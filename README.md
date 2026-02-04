@@ -342,5 +342,5 @@ This fix is provided as-is for educational and research purposes. The original d
 - Orange Pi for providing the hardware
 - ARM China for the Zhouyi NPU architecture
 
-Claude was invaluable in sorting out the last stages. It wrong ALL the tests that identified the order of operations needed to make this work.
+Claude was invaluable in sorting out the last stages. It wrote ALL the tests that identified the order of operations needed to make this work.
 
