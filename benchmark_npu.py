@@ -41,7 +41,7 @@ def get_system_info():
             if 'model name' in line.lower() or 'cpu model' in line.lower():
                 print_result("CPU", line.split(':')[1].strip())
                 break
-    except:
+    except Exception:
         pass
 
     # Memory
@@ -52,7 +52,7 @@ def get_system_info():
                     mem_kb = int(line.split()[1])
                     print_result("Memory", f"{mem_kb // 1024}", "MB")
                     break
-    except:
+    except Exception:
         pass
 
     # Kernel
@@ -60,13 +60,16 @@ def get_system_info():
         with open('/proc/version', 'r') as f:
             version = f.read().split()[2]
             print_result("Kernel", version)
-    except:
+    except Exception:
         pass
 
     # NPU info
     print_result("NPU", "CIX Zhouyi V3 AIPU (3 cores, 4 TECs/core)")
     print_result("ONNX Runtime", ort.__version__)
-    print_result("Providers", ", ".join(ort.get_available_providers()))
+    providers = ort.get_available_providers()
+    print_result("Providers", ", ".join(providers))
+    if "ZhouyiExecutionProvider" not in providers:
+        print("  WARNING: ZhouyiExecutionProvider not available! Running on CPU only.")
 
 def benchmark_inference(session, input_name, input_data, num_iterations, warmup=10):
     """Run inference benchmark and return statistics."""
@@ -153,7 +156,7 @@ def run_benchmarks():
     print_result("Successful", success)
     print_result("Failed", failures)
     print_result("Total Time", f"{elapsed:.2f}", "seconds")
-    print_result("Average Rate", f"{success/elapsed:.1f}", "inf/sec")
+    print_result("Average Rate", f"{success/elapsed:.1f}" if elapsed > 0 else "N/A", "inf/sec")
 
     if failures == 0:
         print("\n  *** STABILITY TEST PASSED - NO HANGS! ***")
@@ -219,6 +222,8 @@ def run_benchmarks():
             interval_count += 1
         except Exception as e:
             errors += 1
+            if errors <= 10:  # Log first 10 errors
+                print(f"    Error #{errors}: {e}", file=sys.stderr)
 
         # Print progress every 10 seconds
         if time.time() - interval_start >= 10:
@@ -233,7 +238,7 @@ def run_benchmarks():
     print_result("Total Inferences", count)
     print_result("Errors", errors)
     print_result("Duration", f"{total_time:.1f}", "seconds")
-    print_result("Average Throughput", f"{count/total_time:.1f}", "inf/sec")
+    print_result("Average Throughput", f"{count/total_time:.1f}" if total_time > 0 else "N/A", "inf/sec")
     print_result("Total Operations", f"{count * 28 * 28 / 1e6:.2f}", "M pixels processed")
 
     results['sustained'] = {'count': count, 'errors': errors, 'duration': total_time}
@@ -284,7 +289,7 @@ def run_benchmarks():
     print_result("Inferences per Session", 2)
     print_result("Total Inferences", session_count * 2)
     print_result("Total Time", f"{elapsed:.2f}", "seconds")
-    print_result("Rate", f"{session_count/elapsed:.1f}", "sessions/sec")
+    print_result("Rate", f"{session_count/elapsed:.1f}" if elapsed > 0 else "N/A", "sessions/sec")
 
     # =========================================================================
     # SUMMARY

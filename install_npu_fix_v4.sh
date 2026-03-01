@@ -23,8 +23,8 @@ fi
 
 echo "[2/5] Applying patch v4..."
 
-python3 << 'PYSCRIPT'
-driver_file = "/usr/src/aipu-5.11.0/armchina-npu/aipu_job_manager.c"
+python3 << PYSCRIPT
+driver_file = "$DRIVER_FILE"
 
 with open(driver_file, 'r') as f:
     content = f.read()

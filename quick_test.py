@@ -1,41 +1,58 @@
 #!/usr/bin/env python3
-import os
+"""Quick test to verify NPU inference works (detects hang-on-second-inference bug)."""
+
 import sys
+import os
+import signal
 
-# Redirect all output to file
-log_file = open('/tmp/npu_test_output.txt', 'w', buffering=1)
-sys.stdout = log_file
-sys.stderr = log_file
+# Timeout handler - if NPU hangs, exit with error
+def timeout_handler(signum, frame):
+    print("TIMEOUT: NPU appears to have hung during inference", file=sys.stderr)
+    sys.exit(2)
 
-print("=== NPU Quick Test ===", flush=True)
+signal.signal(signal.SIGALRM, timeout_handler)
+signal.alarm(30)  # 30 second timeout
 
-os.environ['AIPULIB_PATH'] = '/usr/share/cix/lib/onnxruntime'
-os.environ['OPERATOR_PATH'] = '/usr/share/cix/lib/onnxruntime/operator'
-os.environ['GRAPH_PATH'] = '/tmp/zhouyi_cache/graph'
-os.environ['INTERMIDIATE_PATH'] = '/tmp/zhouyi_cache/intermediate'
+# Set up environment
+os.environ.setdefault('AIPULIB_PATH', '/usr/share/cix/lib/onnxruntime')
+os.environ.setdefault('OPERATOR_PATH', '/usr/share/cix/lib/onnxruntime/operator')
+os.environ.setdefault('GRAPH_PATH', '/tmp/zhouyi_cache/graph')
+os.environ.setdefault('INTERMIDIATE_PATH', '/tmp/zhouyi_cache/intermediate')
 os.makedirs('/tmp/zhouyi_cache/graph', exist_ok=True)
 os.makedirs('/tmp/zhouyi_cache/intermediate', exist_ok=True)
 
-import numpy as np
-print("Step 1: Importing onnxruntime...", flush=True)
-import onnxruntime as ort
-print(f"Step 2: Providers: {ort.get_available_providers()}", flush=True)
+try:
+    import numpy as np
+    import onnxruntime as ort
 
-print("Step 3: Creating session...", flush=True)
-sess = ort.InferenceSession("/home/orangepi/onnx/mnist-12-int8.onnx",
-    providers=['ZhouyiExecutionProvider', 'CPUExecutionProvider'])
-print(f"Step 4: Session created. Providers: {sess.get_providers()}", flush=True)
+    model_path = "/home/orangepi/onnx/mnist-12-int8.onnx"
+    if not os.path.exists(model_path):
+        print(f"ERROR: Model not found: {model_path}", file=sys.stderr)
+        sys.exit(1)
 
-inp = sess.get_inputs()[0]
-x = np.zeros([1, 1, 28, 28], dtype=np.float32)
+    providers = ort.get_available_providers()
+    if "ZhouyiExecutionProvider" not in providers:
+        print(f"WARNING: ZhouyiExecutionProvider not available. Available: {providers}",
+              file=sys.stderr)
 
-print("Step 5: Running inference 1...", flush=True)
-r = sess.run(None, {inp.name: x})
-print(f"Step 6: Inference 1 DONE! Shape: {r[0].shape}", flush=True)
+    sess = ort.InferenceSession(model_path, providers=["ZhouyiExecutionProvider", "CPUExecutionProvider"])
+    input_name = sess.get_inputs()[0].name
+    dummy = np.random.randn(1, 1, 28, 28).astype(np.float32)
 
-print("Step 7: Running inference 2...", flush=True)
-r = sess.run(None, {inp.name: x})
-print(f"Step 8: Inference 2 DONE! Shape: {r[0].shape}", flush=True)
+    errors = 0
+    warnings = 0
+    for i in range(5):
+        try:
+            result = sess.run(None, {input_name: dummy})
+        except Exception as e:
+            errors += 1
+            print(f"Inference {i+1} failed: {e}", file=sys.stderr)
 
-print("=== ALL TESTS PASSED ===", flush=True)
-log_file.close()
+    signal.alarm(0)  # Cancel timeout
+    print(f"Total errors: {errors},  warnings: {warnings}")
+    sys.exit(0 if errors == 0 else 1)
+
+except Exception as e:
+    signal.alarm(0)
+    print(f"ERROR: {e}", file=sys.stderr)
+    sys.exit(1)
