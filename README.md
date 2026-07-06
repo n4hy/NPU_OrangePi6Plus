@@ -2,6 +2,8 @@
 
 **TL;DR:** The stock CIX NPU driver hangs on the second inference. This repo contains a kernel patch that fixes it, plus benchmarks proving stability.
 
+**Validated on Ubuntu 24.04.3 *and* 24.04.4 LTS.** On 24.04.4 the point-release upgrade removes the kernel headers/build tree, so DKMS can no longer rebuild the module — see [Ubuntu 24.04.4 note](#ubuntu-24044-note-kernel-headers) before installing. The C patch itself is unchanged between the two releases.
+
 ---
 
 ## Tested Environment (EXACT versions)
@@ -22,7 +24,7 @@
 
 | Component | Version |
 |-----------|---------|
-| OS | **Ubuntu 24.04.3 LTS (Noble Numbat)** |
+| OS | **Ubuntu 24.04.3 LTS** (original) / **24.04.4 LTS** (re-validated 2026-07-06) |
 | Orange Pi Image | **1.0.2 Noble** |
 | Image Type | user-built |
 | Board Family | cix |
@@ -126,19 +128,28 @@ cd NPU_OrangePi6Plus
 sudo ./install_npu_fix_v4.sh
 ```
 
+**On Ubuntu 24.04.4**, if `install_npu_fix_v4.sh` fails at the DKMS build step (empty
+`build/` dir, no `make.log`), the kernel headers were removed by the point-release
+upgrade. Run the header-restore + rebuild helper, then you're done:
+
+```bash
+sudo ./finish_npu_fix.sh
+```
+
+See the [Ubuntu 24.04.4 note](#ubuntu-24044-note-kernel-headers) below for details.
+
 ### Verify It Works
 
 ```bash
 ~/.pyenv/versions/cix-ort311/bin/python quick_test.py
-cat /tmp/npu_test_output.txt
 ```
 
 Expected:
 ```
-Step 7: Running inference 2...
-Step 8: Inference 2 DONE! Shape: (1, 10)
-=== ALL TESTS PASSED ===
+Total errors: 0,  warnings: 0
 ```
+Exit code `0`. Before the fix, the second inference returns `Error code: 50`
+(`poll /dev/aipu [fail]`, *"AIPU device state is abnormal"*) and hangs until timeout.
 
 ### Run Full Benchmarks
 
@@ -148,11 +159,45 @@ Step 8: Inference 2 DONE! Shape: (1, 10)
 
 ---
 
+## Ubuntu 24.04.4 note (kernel headers)
+
+The C patch is **identical** across 24.04.3 and 24.04.4 — the two string anchors in
+`install_npu_fix_v4.sh` still match the stock `aipu_job_manager.c` byte-for-byte, and
+the patch applies cleanly. What changes on 24.04.4 is the **build environment**, not the fix.
+
+The 24.04.3 → 24.04.4 point-release upgrade:
+
+1. **Reinstalls the stock driver source**, wiping any applied patch and the `.orig` backup.
+   The second-inference hang returns until you re-apply the fix.
+2. **Removes the kernel headers / build tree.** `/lib/modules/6.6.89-cix/build` and
+   `/usr/src/linux-headers-6.6.89-cix` disappear, so `dkms build` fails immediately with
+   an empty `build/` directory and no `make.log`. DKMS status is stuck at `added` and the
+   patched module is never produced.
+
+`finish_npu_fix.sh` handles both — it restores the headers from the on-image package
+(`/opt/linux-headers-next-cix_1.0.2_arm64.deb`, falling back to `/mnt/tmp/...`), recreates
+the `/lib/modules/6.6.89-cix/build` symlink, then rebuilds, installs, and reloads the
+patched module. After it runs:
+
+```
+$ dkms status | grep aipu
+aipu/5.11.0, 6.6.89-cix, aarch64: installed
+```
+
+If you are on a fresh 24.04.4 image, run `sudo ./install_npu_fix_v4.sh` (applies the patch)
+followed by `sudo ./finish_npu_fix.sh` (restores headers + builds). On 24.04.3 the headers
+are already present and `install_npu_fix_v4.sh` alone is sufficient.
+
+---
+
 ## Benchmark Results
 
-Tested on 2026-02-04 with driver fix v4.
+Originally tested 2026-02-04 on Ubuntu 24.04.3; re-validated 2026-07-06 on Ubuntu 24.04.4
+(kernel 6.6.89-cix) after restoring the headers with `finish_npu_fix.sh`.
 
-### Stability: 136,618 Consecutive Inferences, Zero Failures
+### Stability
+
+Original run (24.04.3, 2026-02-04):
 
 | Test | Inferences | Errors | Duration |
 |------|------------|--------|----------|
@@ -160,43 +205,46 @@ Tested on 2026-02-04 with driver fix v4.
 | Sustained load | 136,618 | 0 | 60s |
 | Session recreation | 100 (50 sessions × 2) | 0 | 4.4s |
 
-**The fix works.** Before the patch, inference #2 would hang 100% of the time.
+Re-validation run (24.04.4, 2026-07-06, patched module rebuilt via `finish_npu_fix.sh`):
 
-### NPU Performance Summary
+| Test | Inferences | Errors | Duration | Rate |
+|------|------------|--------|----------|------|
+| `quick_test.py` | 5 | 0 | <1s | exit 0 |
+| Stability (benchmark Test 1) | 1,000 | 0 | 0.36s | 2,808 inf/sec |
 
-| Model | Size | MACs | Latency | Throughput | TOPS |
-|-------|------|------|---------|------------|------|
-| MNIST INT8 | 11KB | 322K | 0.35 ms | 2,900/sec | 0.002 |
-| **MobileNetV2 INT8** | 3.5MB | 300M | **1.43 ms** | **700/sec** | **0.42** |
+**The fix works.** Before the patch, inference #2 hangs 100% of the time with
+`Error code: 50` / `poll /dev/aipu [fail]`. After the patch, 1,000 consecutive
+inferences complete with zero failures.
 
-The **MobileNetV2 result (0.42 TOPS)** is a realistic measure of NPU compute performance.
+### NPU Performance Summary (24.04.4, 2026-07-06)
 
-### Latency Details (MNIST INT8)
+| Model | Size | MACs | Latency (mean) | Throughput | TOPS |
+|-------|------|------|----------------|------------|------|
+| MNIST INT8 | 11KB | 322K | 0.322 ms | 3,101/sec | 0.002 |
+| **MobileNetV2 INT8** | 3.5MB | 300M | **1.80 ms** | **555/sec** | **0.33** |
 
-| Metric | Value |
-|--------|-------|
-| Mean | 0.345 ms |
-| P50 | 0.337 ms |
-| P95 | 0.433 ms |
-| P99 | 0.606 ms |
+The **MobileNetV2 result (~0.33 TOPS)** is a realistic measure of NPU compute
+performance. (The original 24.04.3 run measured 1.43 ms / 700 inf/sec / 0.42 TOPS;
+run-to-run variation is expected.)
 
-### Latency Details (MobileNetV2 INT8)
+### Latency Details (500 timed iterations, 50 warmup, single session per process)
 
-| Metric | Value |
-|--------|-------|
-| Mean | 1.43 ms |
-| Min | 1.26 ms |
-| Max | 2.54 ms |
-| Throughput | 700 inf/sec |
+| Metric | MNIST INT8 | MobileNetV2 INT8 |
+|--------|------------|------------------|
+| Mean | 0.322 ms | 1.80 ms |
+| P50 | 0.306 ms | 1.73 ms |
+| P95 | 0.389 ms | 2.36 ms |
+| P99 | 0.659 ms | 3.83 ms |
+| Min | 0.280 ms | 1.30 ms |
+| Max | 1.010 ms | 7.41 ms |
+| Throughput | 3,101 inf/sec | 555 inf/sec |
 
-### Throughput Comparison
-
-| Model | INT8 | FP32 | Speedup |
-|-------|------|------|---------|
-| MNIST | 2,907 inf/sec | 696 inf/sec | 4.2x |
-| MobileNetV2 | 700 inf/sec | - | - |
-
-INT8 is **4x faster** than FP32. Quantize your models.
+> **benchmark_npu.py note:** on this 24.04.4 / onnxruntime-zhouyi 1.20.0 stack, creating a
+> **second** `InferenceSession` in the same process raises
+> `TypeError: 'builtin_function_or_method' object does not support vectorcall`. This is a
+> userspace binding quirk, **not** the kernel hang — the stability test (single session,
+> 1,000 inferences) passes. The latency numbers above were collected with one session per
+> process to work around it.
 
 ### Model Compatibility Notes
 
@@ -296,7 +344,7 @@ pip list | grep -iE "(onnx|noe|zhouyi|libnoe)"
 sha256sum /usr/src/aipu-5.11.0/armchina-npu/aipu_job_manager.c
 ```
 
-Expected output:
+Expected output (24.04.3 shown; 24.04.4 reports `VERSION="24.04.4 LTS (Noble Numbat)"` — both work):
 ```
 VERSION="24.04.3 LTS (Noble Numbat)"
 6.6.89-cix
